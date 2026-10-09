@@ -1,7 +1,5 @@
 # Despliegue en GCP (GKE)
 
-Este despliegue no se aplicó. No hay cuenta ni proyecto configurados en el workspace. Los archivos se pueden revisar; `terraform apply` y `kubectl apply` quedan para cuando existan credenciales.
-
 ## Qué se va a crear
 
 Terraform (`terraform/gcp`) crea:

@@ -13,15 +13,9 @@ H2 no es MySQL. La comprobación del motor real es el contenedor `mysql:8.4` y `
 
 `docker compose config` aceptó el archivo. `otelcol-contrib validate` aceptó los tres YAML del Collector.
 
-En esta máquina, el 2026-10-09, el stack local estaba arriba y `tests/verify-local.ps1` había pasado. Después del benchmark se volvió a consultar un pedido real. La evidencia de esa petición está en `docs/evidencias/`:
+En esta máquina, el 9 de octubre de 2026, el stack local estaba arriba y `tests/verify-local.ps1` había pasado. Después del benchmark, `GET /api/orders/ord-001` respondió `stockSufficient=true` para `LAPTOP-X1` con `traceId=77fa223e7fd82dc6fb4ca2aea30f7f22`. Ese mismo identificador salió en el JSON de stdout de service-a (`span_id=6f4e7346db5b3b78`) y de service-b (`span_id=e971b873e68f1ccf`). Tempo, en una segunda lectura, devolvió la traza con los dos servicios, `order.compose`, `inventory.lookup` y los `SELECT`. La primera lectura por id aún no traía service-b: es la carrera del ingester. Loki tenía dos líneas con ese `trace_id`. Prometheus, a 30 minutos, dio disponibilidad `100`, errores 5xx `0` y `up{job="otel-collector"}=1`.
 
-- `pedido-ord-001.json`: `ord-001`, SKU `LAPTOP-X1`, `stockSufficient=true`, `traceId=77fa223e7fd82dc6fb4ca2aea30f7f22`.
-- `service-a-log-linea.txt` y `service-b-log-linea.txt`: el mismo `trace_id` en los dos stdout JSON. Los `span_id` son distintos (`6f4e7346db5b3b78` y `e971b873e68f1ccf`).
-- `tempo-trace.json`: la misma traza, ya completa, con 13 spans de `service-a` y `service-b` (HTTP, `order.compose`, `inventory.lookup` y los `SELECT`). La primera lectura por id devolvió solo los spans de service-a; unos segundos después Tempo ya tenía los de service-b. Eso es la carrera del ingester, no una traza rota.
-- `loki-lineas.txt`: dos líneas de Loki cuyo cuerpo empieza por `trace_id=77fa223e7fd82dc6fb4ca2aea30f7f22`.
-- `sli-disponibilidad.json`: la consulta de 30 minutos devolvió `100`. `errores-5xx.json` devolvió `0`. `collector-up.json` devolvió `1`.
-
-El benchmark de esa misma fecha está en `load-tests/results/`. No hay apply de Terraform ni despliegue en GKE o ECS: en el workspace no había credenciales ni, en el momento de la revisión, el binario `terraform`.
+Esos volcados no se guardan en el repositorio. Se vuelven a obtener con los comandos de abajo. El benchmark de esa fecha está resumido en `docs/benchmark-overhead.md`. No hay apply de Terraform ni despliegue en GKE o ECS: no había credenciales ni el binario `terraform`.
 
 ## Comandos
 

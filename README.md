@@ -63,7 +63,6 @@ mvn test
 | `docs/despliegue-gcp.md` | GKE, sin apply ejecutado |
 | `docs/despliegue-aws.md` | ECS Fargate, sin apply ejecutado |
 | `docs/benchmark-overhead.md` | Corrida real del 2026-10-09: p95 +11,36 %, memoria de los JVM entre +38 % y +62 % |
-| `docs/reporte-tecnico.md` | Informe para la entrega. El PDF está junto a ese archivo |
 | `docs/pruebas-y-troubleshooting.md` | Comandos y fallos |
 | `docs/decisiones-arquitectura.md` | Qué se descartó |
 

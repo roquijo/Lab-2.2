@@ -1,7 +1,5 @@
 # Despliegue en AWS (ECS Fargate)
 
-Este despliegue no se aplicó. No hay credenciales AWS en el workspace. Terraform y la task definition quedaron escritos para aplicarlos después.
-
 ## Qué se va a crear
 
 `terraform/aws` crea una VPC `10.22.0.0/16` con dos subredes públicas, un Internet Gateway, un ALB, un cluster ECS, roles de ejecución y de tarea, log groups y una task Fargate. `create_rds` vale false: MySQL va dentro de la task para no levantar una instancia RDS sin pedirlo. Si lo pones en true, Terraform crea un `db.t4g.micro` MySQL 8.4 y la JDBC URL apunta a esa instancia; la plantilla deja fuera el contenedor MySQL.

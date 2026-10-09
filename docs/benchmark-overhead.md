@@ -49,7 +49,7 @@ Un porcentaje de CPU es inestable si el baseline está cerca de cero. Por eso el
 
 ## Resultados
 
-Corrida única del 2026-10-09 en este portátil, con Docker Desktop 28.5.1. Los JSON originales están en `load-tests/results/baseline-summary.json`, `instrumented-summary.json`, `baseline-stats.jsonl` e `instrumented-stats.jsonl`. La tabla la escribió `analyze_overhead.py` en `load-tests/results/overhead-report.md`.
+Corrida única del 2026-10-09 en este portátil, con Docker Desktop 28.5.1. `run-benchmark.ps1` vuelve a escribir los JSON y `overhead-report.md` en `load-tests/results/`. Esa carpeta no se versiona: la tabla de este documento es el registro que queda en el repositorio.
 
 Condiciones iguales en los dos escenarios: imagen ya construida, MySQL con la misma semilla, 5 usuarios virtuales, 30 segundos, pausa de 100 ms, pedidos `ord-001` a `ord-005`, k6 0.57.0 contra `http://host.docker.internal:8080`. El baseline recreó los dos servicios con `OTEL_ENABLED=false`. El instrumentado los recreó con `OTEL_ENABLED=true` y el agente 2.31.1. El Collector, Prometheus, Tempo, Loki y Grafana siguieron encendidos en ambos.
 

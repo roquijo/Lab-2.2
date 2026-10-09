@@ -1,8 +1,17 @@
+# Maven
 target/
+
+# IDE
 .idea/
 .vscode/
 *.iml
+*.swp
+
+# Entorno local y secretos
 .env
+deploy/gcp/k8s/mysql-secret.yaml
+
+# Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
@@ -11,12 +20,21 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-deploy/gcp/k8s/mysql-secret.yaml
-load-tests/results/*.json
-load-tests/results/*.jsonl
-load-tests/results/*.md
-docs/evidencias/*.json
-docs/evidencias/*.txt
-docs/evidencias/*.png
-!docs/evidencias/.gitkeep
+
+# Salida local de pruebas y benchmark
+load-tests/results/*
 !load-tests/results/.gitkeep
+docs/evidencias/*
+!docs/evidencias/.gitkeep
+
+# Informes generados
+docs/reporte-tecnico.html
+docs/reporte-tecnico.pdf
+docs/*.html
+
+# Sistema y logs
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log
+*.dumpstream
