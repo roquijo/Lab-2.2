@@ -65,7 +65,7 @@ Grafana Explore, datasource Loki, y en el resultado el campo derivado **Ver traz
 | El panel de disponibilidad sale vacío | La etiqueta no es `service_name` o el código no es `http_response_status_code` | En Explore, ejecuta `http_server_request_duration_seconds_count` sin filtros y mira las etiquetas |
 | k6 no llega a la app | Desde el contenedor, `localhost` es el propio k6 | El script de benchmark usa `host.docker.internal` |
 | `terraform` no existe | No está instalado | Los manifiestos igual se leen; el apply queda pendiente |
-| Puertos ocupados | Otro compose del laboratorio docente | Para el otro stack o cambia el mapeo solo en local, y documenta el cambio |
+| Puertos ocupados | Otro proceso usa 8080, 3000, 9090 u otro puerto del compose | Identifica el proceso y libera el puerto. No cambies el mapeo sin anotarlo en este documento |
 
 ## Lo que no debe darse por cumplido
 

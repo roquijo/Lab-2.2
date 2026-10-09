@@ -53,6 +53,6 @@ Eso es el salto desde un punto del gráfico. Si una versión del agente no adjun
 
 Disponibilidad = solicitudes HTTP 2xx de rutas `/api/` dividido entre todas las solicitudes de esas rutas, usando `increase(...[$__range])` sobre la ventana del dashboard. La serie es `http_server_request_duration_seconds_count` y la etiqueta de código es `http_response_status_code`. No se usa `rate()[5m]` con un mínimo artificial: cuando el contador deja de subir, esa forma dibuja 0 % aunque el periodo haya sido exitoso. El panel de errores 5xx suma un cero cuando no existe serie de fallos, para mostrar 0 % y no "No data". Un 404 de `ord-999` entra en el total y no en los 2xx, pero no es un error de servidor.
 
-## Qué no se copió del ejemplo
+## Backend de trazas
 
-El datasource del docente apuntaba `tracesToLogsV2` a Loki sin desplegar Loki. Aquí Loki está en el compose y la consulta usa el atributo que el Collector escribe. Jaeger no participa: el uid de destino es `tempo`.
+Loki está en el compose y la consulta usa el atributo que el Collector escribe. Jaeger no participa: el uid de destino es `tempo`.

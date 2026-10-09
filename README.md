@@ -2,8 +2,6 @@
 
 Dos microservicios Spring Boot consultan un pedido y su inventario en MySQL. OpenTelemetry recoge la traza de esa llamada, las métricas HTTP y JVM, y logs JSON con el mismo `trace_id`. En local, Grafana muestra las tres señales. En GKE y en ECS los manifiestos quedan listos; no se desplegaron porque este workspace no tiene credenciales de nube.
 
-El repositorio `oTelLabs-main` se usó como referencia y no se modificó. El análisis está en `docs/analisis-repositorio-docente.md`.
-
 ## Requisitos
 
 - JDK 21 y Maven 3.9, para las pruebas.

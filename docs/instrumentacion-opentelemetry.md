@@ -72,7 +72,7 @@ Las pruebas de Maven no adjuntan el agente, así que esas líneas de test no tra
 |---|---|---|
 | `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` | Respeta la decisión del padre y, si no hay padre, aplica el ratio |
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Conserva todas las trazas en el laboratorio |
-| `OTEL_PROPAGATORS` | `tracecontext,baggage` | W3C, el mismo mecanismo que el ejemplo Python llamaba `traceparent` |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | Cabecera W3C `traceparent` y baggage entre service-a y service-b |
 | `OTEL_LOGS_EXPORTER` | `otlp` | Además de stdout |
 | `OTEL_METRICS_EXPORTER` | `otlp` | Hacia el Collector, no hacia un `/metrics` propio |
 

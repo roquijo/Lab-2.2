@@ -9,7 +9,7 @@ La misma imagen, los mismos pedidos `ord-001` a `ord-005`, el mismo MySQL y el m
 | Baseline | `java -jar` sin `-javaagent` | Sigue encendido, pero no recibe telemetría de las apps |
 | Instrumentado | `java -javaagent:...` y exporta OTLP | Recibe trazas, métricas y logs |
 
-Apagar solo el Collector, como hace el README del ejemplo, deja el SDK creando spans. Eso no mide el costo de instrumentar. Aquí el agente no se carga.
+Apagar solo el Collector dejaría el proceso creando spans y exportándolos a un destino caído. Eso no mide el costo de instrumentar. En el baseline el agente no se carga: `OTEL_ENABLED=false`.
 
 No hay `time.sleep` en el código de negocio. La latencia es la de HTTP, JDBC y, en el escenario instrumentado, el trabajo del agente.
 

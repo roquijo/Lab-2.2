@@ -50,7 +50,7 @@ flowchart LR
 7. Los logs emitidos dentro del span llevan `trace_id` y `span_id` en el MDC. El agente también los exporta por OTLP.
 8. El Collector escribe la traza en Tempo, la métrica en el endpoint Prometheus y el log en Loki.
 
-No hay un span manual llamado `fetch.order.db`. Ese nombre, en el ejemplo de Python, repetía lo que ya hace la instrumentación del driver. Aquí el span manual describe la regla de negocio y el span JDBC describe la sentencia.
+El span manual describe la regla de negocio (`order.compose`, `inventory.lookup`). El span JDBC lo abre el agente sobre el driver y describe la sentencia. No se añade un segundo span manual que repita el SQL.
 
 ## Recorrido de cada señal
 

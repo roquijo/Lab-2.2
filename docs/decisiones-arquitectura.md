@@ -2,9 +2,9 @@
 
 ## Lenguaje y framework
 
-El ejemplo del docente es FastAPI. Este laboratorio usa Java 21 y Spring Boot 3.5.16 porque es el stack que ya se puede mantener y defender. Spring Boot 4.1.1 ya existe, pero cambia suficientes valores por defecto como para desviar el trabajo de la observabilidad. La línea 3.5 sigue publicada y el agente 2.31.1 la instrumenta.
+Este laboratorio usa Java 21 y Spring Boot 3.5.16. Spring Boot 4.1.1 ya existe, pero cambia suficientes valores por defecto como para desviar el trabajo de la observabilidad. La línea 3.5 sigue publicada y el agente 2.31.1 la instrumenta.
 
-Maven, no Gradle, por la misma razón.
+Maven, no Gradle: el pom padre ya expresa los dos módulos, las pruebas y la versión del API de OpenTelemetry.
 
 ## Agente en vez de SDK embebido
 
@@ -16,7 +16,7 @@ Se descartó `@WithSpan` junto con spans manuales. Las dos técnicas a la vez ge
 
 MySQL 8.4 es el motor pedido. JdbcTemplate deja la sentencia a la vista y el agente la instrumenta. JPA habría escondido el SQL sin aportar nada al objetivo.
 
-No se copió la espera aleatoria de `service-b`. Medía el `sleep`, no la base de datos.
+service-b no introduce una espera artificial. Una espera mediría el `sleep` y no la consulta a la base.
 
 ## Un solo backend de trazas
 
@@ -40,7 +40,7 @@ GKE y ECS forman parte del encargo, y no había credenciales. Terraform y los ma
 
 En ECS, MySQL va en la task por defecto para no crear una RDS de pago sin una decisión explícita. El precio es que el disco es efímero. `create_rds` deja la alternativa escrita.
 
-En GKE el Collector es un Deployment de una réplica, no un DaemonSet. Con dos servicios de laboratorio un DaemonSet multiplica procesos y configuración sin cambiar el recorrido de las señales. El ejemplo usaba DaemonSet y además dejaba sin definir la cuenta de servicio.
+En GKE el Collector es un Deployment de una réplica, no un DaemonSet. Con dos servicios un DaemonSet multiplica procesos y configuración sin cambiar el recorrido de las señales. El Deployment declara su cuenta de servicio.
 
 ## Benchmark
 
