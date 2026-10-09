@@ -1,0 +1,226 @@
+{
+  "uid": "lab22-observability",
+  "title": "Lab 2.2 — Pedidos e inventario",
+  "description": "Señales exportadas por el OpenTelemetry Collector. Las métricas HTTP provienen del Java Agent (http.server.request.duration). CPU y memoria son métricas JVM del proceso, no del nodo.",
+  "tags": ["lab22", "otel"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Servicio",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(http_server_request_duration_seconds_count, service_name)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(http_server_request_duration_seconds_count, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "refresh": 2,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "1. Tasa de solicitudes HTTP",
+      "description": "Fuente: Prometheus. Métrica http_server_request_duration_seconds_count exportada por el Collector desde el histograma http.server.request.duration del Java Agent. Unidad: solicitudes por segundo. Etiqueta service_name.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__rate_interval]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "2. Latencia HTTP p95 y p99",
+      "description": "Fuente: Prometheus. histogram_quantile sobre http_server_request_duration_seconds_bucket. Unidad: segundos. El histograma lo emite el Java Agent con buckets de la convención HTTP.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{service_name}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "3. Tasa de errores HTTP 5xx",
+      "description": "Fuente: Prometheus. Proporción de solicitudes con http_response_status_code 5xx. Unidad: porcentaje 0-100. Un 404 de pedido inexistente no entra en este panel.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (sum by (service_name) (increase(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\", http_response_status_code=~\"5..\"}[$__range])) or (sum by (service_name) (increase(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__range])) * 0)) / sum by (service_name) (increase(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__range]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "4. SLI de disponibilidad",
+      "description": "SLI explícito: solicitudes 2xx de rutas /api dividido entre todas las solicitudes /api del rango visible del dashboard. Sin tráfico el resultado no es numérico y el panel queda vacío, en lugar de un falso 0 %. Objetivo de referencia: >= 99.5 % en el camino feliz. Fuente: Prometheus. Unidad: porcentaje.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 99 },
+              { "color": "green", "value": 99.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "expr": "100 * sum(increase(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\", http_response_status_code=~\"2..\"}[$__range])) / sum(increase(http_server_request_duration_seconds_count{service_name=~\"$service\", http_route=~\"/api/.*\"}[$__range]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "5. CPU y memoria de los servicios",
+      "description": "Fuente: Prometheus. jvm_cpu_recent_utilization es la utilización reciente de CPU del proceso Java (razón 0-1, mostrada como porcentaje). jvm_memory_used_bytes{jvm_memory_type=\"heap\"} es el heap usado. No es la CPU del nodo: el agente no ve cgroups ajenos.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true, "cellHeight": "sm" },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true }, "renameByName": { "service_name": "Servicio", "Value #A": "CPU", "Value #B": "Heap" } } }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "format": "table",
+          "expr": "max by (service_name) (jvm_cpu_recent_utilization_ratio{service_name=~\"$service\"})",
+          "legendFormat": ""
+        },
+        {
+          "refId": "B",
+          "instant": true,
+          "format": "table",
+          "expr": "sum by (service_name) (jvm_memory_used_bytes{service_name=~\"$service\", jvm_memory_type=\"heap\"})",
+          "legendFormat": ""
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "6. Salud del OpenTelemetry Collector",
+      "description": "Fuente: Prometheus, scrape del endpoint interno :8888. otelcol_exporter_sent_spans_total son spans exportados. otelcol_exporter_send_failed_spans_total son fallos de exportación. otelcol_processor_refused_spans_total son spans rechazados por memory_limiter. Unidad: eventos por segundo.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(otelcol_exporter_sent_spans_total[5m]))",
+          "legendFormat": "spans exportados"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)",
+          "legendFormat": "fallos de exportación de spans"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(otelcol_processor_refused_spans_total[5m])) or vector(0)",
+          "legendFormat": "spans rechazados"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(otelcol_exporter_send_failed_log_records_total[5m])) or vector(0)",
+          "legendFormat": "fallos de exportación de logs"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total[5m])) or vector(0)",
+          "legendFormat": "fallos de exportación de métricas"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Collector en scrape",
+      "description": "up del job otel-collector. 1 significa que Prometheus está leyendo :8888.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        { "refId": "A", "instant": true, "expr": "up{job=\"otel-collector\"}" }
+      ]
+    }
+  ]
+}

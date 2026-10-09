@@ -1,0 +1,9 @@
+**/target
+.git
+.idea
+*.md
+load-tests
+docs
+terraform
+deploy/gcp
+deploy/aws

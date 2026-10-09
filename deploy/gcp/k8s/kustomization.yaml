@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lab22
+resources:
+  - namespace.yaml
+  - mysql.yaml
+  - collector.yaml
+  - services.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: otel-collector-config
+    files:
+      - config.yaml=../../../observability/collector/collector-gcp.yaml
+  - name: mysql-init
+    files:
+      - init.sql=../../local/mysql/init.sql
+images:
+  - name: lab22/service-a
+    newName: REGION-docker.pkg.dev/PROJECT_ID/lab22/service-a
+    newTag: "1.0.0"
+  - name: lab22/service-b
+    newName: REGION-docker.pkg.dev/PROJECT_ID/lab22/service-b
+    newTag: "1.0.0"

@@ -1,0 +1,6 @@
+region          = "us-east-1"
+service_a_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/lab22/service-a:1.0.0"
+service_b_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/lab22/service-b:1.0.0"
+collector_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/lab22/collector:1.0.0"
+db_password     = "CAMBIAR"
+create_rds      = false

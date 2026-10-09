@@ -1,0 +1,200 @@
+name: lab22
+
+networks:
+  lab22:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+
+x-java-env: &java-env
+  OTEL_ENABLED: ${OTEL_ENABLED:-true}
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+  OTEL_METRIC_EXPORT_INTERVAL: "15000"
+  OTEL_PROPAGATORS: tracecontext,baggage
+  OTEL_JAVAAGENT_EXCLUDE_URLS: ".*/actuator/.*"
+  DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+  CLOUD_PROVIDER: local
+  SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/lab22?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&serverTimezone=UTC
+  SPRING_DATASOURCE_USERNAME: lab
+  SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-lab22-local}
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: lab22-mysql
+    environment:
+      MYSQL_DATABASE: lab22
+      MYSQL_USER: lab
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lab22-local}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-lab22-root}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - lab22
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ulab", "-p${MYSQL_PASSWORD:-lab22-local}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  tempo:
+    image: grafana/tempo:2.8.1
+    container_name: lab22-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ../../observability/tracing/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    networks:
+      - lab22
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: lab22-loki
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ../../observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - lab22
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    container_name: lab22-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ../../observability/collector/collector-local.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+      - "8889:8889"
+      - "13133:13133"
+      - "55679:55679"
+    environment:
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+    networks:
+      - lab22
+    depends_on:
+      - tempo
+      - loki
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    container_name: lab22-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-remote-write-receiver"
+      - "--enable-feature=exemplar-storage"
+    volumes:
+      - ../../observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - lab22
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: lab22-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - lab22
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+
+  service-a:
+    build:
+      context: ../..
+      dockerfile: services/service-a/Dockerfile
+    image: lab22/service-a:1.0.0
+    container_name: lab22-service-a
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8080"
+      SERVICE_B_URL: http://service-b:8081
+      OTEL_SERVICE_NAME: service-a
+      OTEL_RESOURCE_ATTRIBUTES: service.version=1.0.0,deployment.environment=${DEPLOYMENT_ENVIRONMENT:-local},service.namespace=lab22,cloud.provider=local
+    ports:
+      - "8080:8080"
+    networks:
+      - lab22
+    depends_on:
+      mysql:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      service-b:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health/liveness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  service-b:
+    build:
+      context: ../..
+      dockerfile: services/service-b/Dockerfile
+    image: lab22/service-b:1.0.0
+    container_name: lab22-service-b
+    environment:
+      <<: *java-env
+      SERVER_PORT: "8081"
+      OTEL_SERVICE_NAME: service-b
+      OTEL_RESOURCE_ATTRIBUTES: service.version=1.0.0,deployment.environment=${DEPLOYMENT_ENVIRONMENT:-local},service.namespace=lab22,cloud.provider=local
+    ports:
+      - "8081:8081"
+    networks:
+      - lab22
+    depends_on:
+      mysql:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/actuator/health/liveness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s

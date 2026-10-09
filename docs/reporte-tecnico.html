@@ -1,0 +1,173 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Laboratorio 2.2</title><style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11.5pt; line-height: 1.35; margin: 18mm 16mm; color: #1a1a1a; }
+    h1 { font-size: 18pt; }
+    h2 { font-size: 14pt; margin-top: 1.2em; page-break-after: avoid; }
+    pre, code { font-family: Consolas, monospace; font-size: 9pt; }
+    pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }
+    table { border-collapse: collapse; width: 100%; margin: 0.6em 0 1em; page-break-inside: avoid; }
+    th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #eee; }
+    img { width: 100%; }
+    figure { margin: 1em 0; page-break-inside: avoid; }
+    figcaption { font-size: 10pt; color: #333; }
+    </style></head><body><h1>Laboratorio 2.2 — Pipeline de observabilidad con OpenTelemetry</h1>
+<p>Informe técnico de la implementación propia en <code>Lab 2.2</code>. Las cifras de este documento salen de la corrida local del 9 de octubre de 2026. Los despliegues en GKE y ECS están preparados y no se ejecutaron: este workspace no tenía credenciales de GCP ni de AWS, y tampoco el binario de Terraform.</p>
+<h2>1. Introducción y objetivos</h2>
+<p>El laboratorio pide un sistema distribuido que produzca métricas, logs y trazas de una misma operación de negocio, y un pipeline que las lleve hasta herramientas donde se puedan consultar juntas. El repositorio del docente (<code>oTelLabs-main</code>, Python y FastAPI) sirvió para entender el problema. No es la solución entregada y no se modificó.</p>
+<p>La implementación propia usa dos microservicios Spring Boot 3.5.16 sobre Java 21:</p>
+<ul>
+<li><code>service-a</code> consulta un pedido en MySQL y llama a <code>service-b</code>.</li>
+<li><code>service-b</code> consulta el inventario de ese SKU.</li>
+</ul>
+<p>La operación de demostración es <code>GET /api/orders/{orderId}</code>. La respuesta dice si el stock alcanza (<code>available &gt;= quantity</code>). Los pedidos <code>ord-001</code> a <code>ord-005</code> se cargan al crear la base.</p>
+<p>Objetivos cubiertos en local:</p>
+<ul>
+<li>Trazas distribuidas desde la petición HTTP hasta JDBC y la llamada interna.</li>
+<li>Métricas HTTP, JVM y de negocio en Prometheus, con un dashboard de Grafana.</li>
+<li>Logs JSON con <code>trace_id</code> y <code>span_id</code>, consultables en Loki y enlazados a Tempo.</li>
+<li>OpenTelemetry Collector 0.162.0 como único punto de salida de las tres señales.</li>
+<li>Comparación de carga, con y sin el agente Java, sobre la misma lógica de negocio.</li>
+</ul>
+<p>Objetivos dejados listos, sin apply:</p>
+<ul>
+<li>GKE con Cloud Trace, Cloud Logging y Managed Prometheus.</li>
+<li>ECS Fargate con X-Ray, CloudWatch Logs y EMF.</li>
+</ul>
+<h2>2. Arquitectura</h2>
+<pre>Cliente
+  |  HTTP :8080
+  v
+service-a  --JDBC--&gt; MySQL :3306
+  |  HTTP :8081  (traceparent W3C)
+  v
+service-b  --JDBC--&gt; MySQL
+  |
+  |  OTLP gRPC :4317   (trazas, métricas, logs)
+  v
+OpenTelemetry Collector
+  |-- otlp_grpc/tempo --&gt; Tempo --&gt; Grafana
+  |-- prometheus :8889 --&gt; Prometheus --&gt; Grafana
+  +-- otlp_http/loki  --&gt; Loki --&gt; Grafana</pre>
+<p>MySQL 8.4 guarda <code>orders</code> e <code>inventory</code>. El acceso es <code>JdbcTemplate</code>, no JPA. El agente Java instrumenta el driver; un span manual de SQL duplicaría esa información. Los spans manuales describen la regla de negocio: <code>order.compose</code> e <code>inventory.lookup</code>.</p>
+<p>El agente es <code>opentelemetry-javaagent</code> 2.31.1. La aplicación solo depende de la API 1.65.0. El SDK de runtime lo aporta el agente, así que no hay dos SDK exportando a la vez. <code>OTEL_ENABLED=false</code> arranca el mismo jar sin <code>-javaagent</code>. Esa es la diferencia entre el baseline y el escenario instrumentado.</p>
+<p>En local el muestreo es <code>parentbased_traceidratio</code> con argumento <code>1.0</code>: se conserva cada traza. El intervalo de métricas es 15 segundos. Los propagadores son <code>tracecontext</code> y <code>baggage</code>.</p>
+<p>GCP y AWS no añaden un segundo diseño de aplicación. Cambian el exporter del Collector y la plataforma que ejecuta los contenedores. Los YAML están en <code>observability/collector/collector-gcp.yaml</code> y <code>collector-aws.yaml</code>. Terraform está en <code>terraform/gcp</code> y <code>terraform/aws</code>.</p>
+<h2>3. Decisiones de diseño</h2>
+<table>
+<tr><th>Decisión</th><th>Motivo</th></tr>
+<tr><td>Java y Spring Boot</td><td>Es el stack de mantenimiento pedido. El ejemplo del docente es Python.</td></tr>
+<tr><td>Agente Java, no SDK embebido</td><td>La auto-instrumentación de HTTP y JDBC ya cubre el camino técnico. El código de negocio solo abre spans de dominio.</td></tr>
+<tr><td>Tempo, sin Jaeger</td><td>Grafana ya consulta Tempo. Un segundo almacén de trazas no aporta una señal nueva en local.</td></tr>
+<tr><td>Loki para logs locales</td><td>Hace falta un backend que Grafana pueda filtrar por <code>trace_id</code>. Cloud Logging queda para GKE.</td></tr>
+<tr><td>Prometheus hace scrape del Collector (<code>:8889</code>)</td><td>Las aplicaciones no exponen <code>/metrics</code>. Evita un segundo registro Micrometer.</td></tr>
+<tr><td>MySQL en el compose y, en ECS, como sidecar opcional</td><td>La traza tiene que mostrar persistencia. RDS queda detrás de <code>create_rds=false</code> para no crear una base de pago sin una decisión explícita.</td></tr>
+<tr><td>Sin <code>googlecloud</code> en el compose local</td><td>Ese exporter exige credenciales y un proyecto. En el ejemplo del docente quedaba activo con una ruta de ADC de otra máquina.</td></tr>
+</table>
+<p>El ejemplo del docente incrementaba <code>http_requests_total</code> dos veces por petición exitosa, así que un SLI de disponibilidad caía cerca del 50 % sin errores reales. Aquí el histograma HTTP lo emite el agente una vez por petición. El dashboard filtra <code>http_route=~&quot;/api/.*&quot;</code>. El patrón de exclusión del agente es <code>.*/actuator/.*</code>: un patrón que solo empieza por <code>/actuator/</code> no coincide con la URL completa y el healthcheck contaminaba las series.</p>
+<p>Los exporters <code>otlp</code> y <code>otlphttp</code> están deprecados en el Collector 0.162.0. La configuración local usa <code>otlp_grpc/tempo</code> y <code>otlp_http/loki</code>. Los tres YAML pasaron <code>otelcol-contrib validate</code>.</p>
+<h2>4. Los tres pilares</h2>
+<h3>Trazas</h3>
+<p>El agente abre el span servidor <code>GET /api/orders/{orderId}</code>. <code>OrderFulfillmentService</code> abre <code>order.compose</code> como hijo, con <code>order.id</code> y <code>product.sku</code>. El <code>SELECT</code> de pedidos aparece como span JDBC. <code>RestClient</code> propaga <code>traceparent</code>. En service-b el span servidor es <code>GET /api/inventory/{sku}</code>, el de negocio es <code>inventory.lookup</code> y el de base de datos es <code>SELECT lab22.inventory</code>.</p>
+<p>Un 404 de pedido no marca el span de negocio como error: el cliente pidió un id que no existe. Un fallo de service-b sí marca <code>order.compose</code> en error. Eso está cubierto por las pruebas de <code>mvn test</code>.</p>
+<h3>Métricas</h3>
+<p>El agente exporta <code>http.server.request.duration</code> y métricas JVM. La aplicación suma contadores de negocio (<code>orders.composed</code>, consultas y reservas de inventario). El Collector los publica en <code>:8889</code> con <code>UnderscoreEscapingWithSuffixes</code>. El nombre que Prometheus scrapea para la latencia HTTP es <code>http_server_request_duration_seconds_count</code>. La CPU del proceso es <code>jvm_cpu_recent_utilization_ratio</code>. El nombre sin <code>_ratio</code> no existe en esta traducción y dejaba el panel vacío.</p>
+<h3>Logs</h3>
+<p>Logback escribe JSON a stdout con <code>trace_id</code>, <code>span_id</code>, servicio, versión y entorno. El agente reenvía el mismo evento por OTLP. El processor <code>transform/logs</code> antepone <code>trace_id=&lt;32 hex&gt;</code> al cuerpo. Grafana enlaza ese texto con la expresión <code>trace_id=([0-9a-f]{32})</code>. En Loki el identificador es structured metadata, no etiqueta de stream: <code>{service_name=&quot;service-a&quot;} | trace_id=&quot;...&quot;</code> encuentra la línea; seleccionar <code>trace_id</code> como etiqueta de índice no es el camino correcto.</p>
+<h2>5. Collector</h2>
+<p>Receivers: OTLP gRPC <code>4317</code> y HTTP <code>4318</code>.</p>
+<p>Orden de processors en trazas: <code>memory_limiter</code> (400 MiB, pico de 100), <code>resource</code>, <code>filter/health</code>, <code>batch</code> (5 s, 1024, tope 2048). El limitador va primero para rechazar antes de gastar memoria. El batch va al final para no empaquetar spans que el filtro va a tirar. Los logs pasan además por <code>transform/logs</code>.</p>
+<p>Salud: extensión <code>health_check</code> en <code>:13133</code> y métricas internas en <code>:8888</code>. Prometheus scrapea ese puerto con el job <code>otel-collector</code>. El panel de fallos usa <code>or vector(0)</code> porque las series de error no existen hasta que hay un fallo.</p>
+<p>En GCP el Collector exporta trazas y logs con <code>googlecloud</code> y métricas con <code>googlemanagedprometheus</code>. La cuenta de servicio prevista tiene <code>cloudtrace.agent</code>, <code>logging.logWriter</code> y <code>monitoring.metricWriter</code>. En AWS exporta con <code>awsxray</code>, <code>awscloudwatchlogs</code> y <code>awsemf</code>. La imagen de Fargate hornea <code>collector-aws.yaml</code> porque la task no tiene un bind mount.</p>
+<h2>6. Evidencia de una petición real</h2>
+<p>El 9 de octubre de 2026, con <code>OTEL_ENABLED=true</code> después del benchmark, <code>GET /api/orders/ord-001</code> respondió:</p>
+<ul>
+<li>pedido <code>ord-001</code>, SKU <code>LAPTOP-X1</code>, cantidad 1, estado <code>delivered</code>, cliente <code>cust-100</code>;</li>
+<li>inventario: 15 disponibles, 2 reservadas, almacén <code>WH-BOGOTA</code>;</li>
+<li><code>stockSufficient=true</code>;</li>
+<li><code>traceId=77fa223e7fd82dc6fb4ca2aea30f7f22</code>.</li>
+</ul>
+<p>El stdout de service-a, en el mismo segundo (<code>2026-10-09T20:34:21.102Z</code>):</p>
+<pre>{&quot;level&quot;:&quot;INFO&quot;,&quot;message&quot;:&quot;Pedido compuesto orderId=ord-001 sku=LAPTOP-X1 sufficient=true&quot;,&quot;span_id&quot;:&quot;6f4e7346db5b3b78&quot;,&quot;trace_id&quot;:&quot;77fa223e7fd82dc6fb4ca2aea30f7f22&quot;,&quot;service&quot;:&quot;service-a&quot;}</pre>
+<p>El stdout de service-b (<code>20:34:21.100Z</code>):</p>
+<pre>{&quot;level&quot;:&quot;INFO&quot;,&quot;message&quot;:&quot;Inventario consultado sku=LAPTOP-X1 available=15&quot;,&quot;span_id&quot;:&quot;e971b873e68f1ccf&quot;,&quot;trace_id&quot;:&quot;77fa223e7fd82dc6fb4ca2aea30f7f22&quot;,&quot;service&quot;:&quot;service-b&quot;}</pre>
+<p>El <code>trace_id</code> coincide. Los <code>span_id</code> no: cada log se emitió dentro de su span de negocio.</p>
+<p>Loki devolvió dos líneas cuyo cuerpo empieza por <code>trace_id=77fa223e7fd82dc6fb4ca2aea30f7f22</code>, una por servicio. La consulta de structured metadata <code>{service_name=~&quot;service-a|service-b&quot;} | trace_id=&quot;77fa223e7fd82dc6fb4ca2aea30f7f22&quot;</code> también devolvió esas dos líneas. La primera consulta, hecha a los pocos segundos, devolvió cero: el log ya estaba en stdout y todavía no en Loki.</p>
+<p>Tempo, en la segunda lectura del mismo id, devolvió 13 spans:</p>
+<table>
+<tr><th>Servicio</th><th>Span</th></tr>
+<tr><td>service-a</td><td><code>GET /api/orders/{orderId}</code>, <code>order.compose</code>, <code>SELECT lab22.orders</code>, <code>GET</code> (cliente)</td></tr>
+<tr><td>service-b</td><td><code>GET /api/inventory/{sku}</code>, <code>inventory.lookup</code>, <code>SELECT lab22.inventory</code></td></tr>
+</table>
+<p>También aparecen <code>Ping</code>, <code>Prepare statement</code> y <code>Execute prepared statement</code>. Son del agente JDBC, no spans manuales duplicados. La primera lectura por id solo traía service-a. Unos segundos después estaban los dos servicios. Es la carrera del ingester de Tempo: la búsqueda o una relectura encuentran la traza completa. <code>tests/verify-local.ps1</code> reintenta por eso.</p>
+<p>Prometheus, ventana de 30 minutos en esa misma sesión:</p>
+<ul>
+<li>SLI de disponibilidad de rutas <code>/api/</code>: <code>100</code>;</li>
+<li>tasa de errores 5xx: <code>0</code>;</li>
+<li><code>up{job=&quot;otel-collector&quot;}</code>: <code>1</code>.</li>
+</ul>
+<p>Los archivos están en <code>docs/evidencias/</code>.</p>
+<h2>7. Dashboard</h2>
+<p>El dashboard aprovisionado es «Lab 2.2 — Pedidos e inventario» (<code>uid</code> <code>lab22-observability</code>). La captura <code>docs/evidencias/grafana-dashboard.png</code> corresponde a los últimos 30 minutos de esa sesión, después de la carga de k6.</p>
+<table>
+<tr><th>Panel</th><th>Qué se vio</th></tr>
+<tr><td>1. Tasa HTTP</td><td>Pico cercano a 26 req/s en service-a y service-b alrededor de las 15:30, hora local, que es la ventana del benchmark.</td></tr>
+<tr><td>2. Latencia p95 y p99</td><td>El gráfico marca picos de hasta unos 2 s. No es el p99 de k6. <code>histogram_quantile</code> sobre <code>rate()</code> se dispara cuando el intervalo tiene pocas muestras y un máximo alto. El percentil de la prueba de carga está en la sección 8.</td></tr>
+<tr><td>3. Errores 5xx</td><td>Línea en 0 % para los dos servicios. Antes, sin serie 5xx, Grafana decía &quot;No data&quot;. La consulta añade un cero derivado del total.</td></tr>
+<tr><td>4. SLI</td><td>Gauge en 100 %.</td></tr>
+<tr><td>5. CPU y memoria</td><td>Tras la carga, en reposo: service-a CPU reciente 0,000277 y heap 73 064 368 bytes; service-b 0,000222 y 81 810 160 bytes. Es <code>jvm_cpu_recent_utilization_ratio</code>, no el porcentaje de <code>docker stats</code> durante k6.</td></tr>
+<tr><td>6. Collector</td><td>El job <code>otel-collector</code> estaba en 1. El panel de spans exportados y fallos comparte esa captura; los fallos se dibujan en 0 cuando la serie de error no existe.</td></tr>
+</table>
+<p>Navegación configurada y comprobada en la API de Grafana después de reiniciar:</p>
+<ul>
+<li>Loki, derived field <code>TraceID</code>, regex <code>trace_id=([0-9a-f]{32})</code>, destino Tempo, URL <code>${__value.raw}</code>.</li>
+<li>Tempo, <code>tracesToLogsV2</code>, consulta <code>{service_name=~&quot;service-a|service-b&quot;} | trace_id=</code> más el id de la traza.</li>
+<li>Prometheus, exemplars hacia Tempo.</li>
+</ul>
+<p>El archivo de aprovisionamiento escribe <code>$$</code> delante de esas variables. Con un solo <code>$</code>, Grafana las borra al leer el YAML porque cree que son variables de entorno. La API llegó a devolver la consulta de logs con el id vacío. Tras el escape, la API devuelve de nuevo <code>${__trace.traceId}</code> y <code>${__value.raw}</code>. El clic del exemplar en la interfaz no se ejercitó; el enlace por <code>trace_id</code> en el log y la consulta LogQL sí.</p>
+<figure><img src="evidencias/grafana-dashboard.png" alt="Dashboard de Grafana con la carga del 9 de octubre de 2026"><figcaption>Figura 1. Dashboard local después del benchmark. El SLI marca 100 % y la tasa de errores 5xx está en cero.</figcaption></figure><h2>8. Benchmark</h2>
+<p>Script: <code>load-tests/run-benchmark.ps1</code>. k6 0.57.0 en Docker, 5 usuarios virtuales, 30 segundos, pausa de 100 ms, pedidos <code>ord-001</code> a <code>ord-005</code>, URL <code>http://host.docker.internal:8080</code>. Misma imagen, misma base y mismo Compose. Única variable de aplicación: <code>OTEL_ENABLED</code>. El Collector siguió encendido en el baseline, pero el proceso Java no cargaba el agente. Apagar solo el Collector, como hace el README del ejemplo, dejaría el SDK creando spans y no mediría el costo de instrumentar.</p>
+<p><code>docker stats</code> muestreó service-a, service-b y el Collector durante 40 segundos en cada pasada. Fórmulas, aplicadas por <code>load-tests/analyze_overhead.py</code>:</p>
+<ul>
+<li>overhead absoluto = instrumentado − baseline</li>
+<li>overhead porcentual = (instrumentado − baseline) / baseline × 100</li>
+</ul>
+<table>
+<tr><th>Métrica</th><th>Baseline</th><th>Instrumentado</th><th>Absoluto</th><th>%</th></tr>
+<tr><td>Latencia p50 (ms)</td><td>8,6306</td><td>8,6653</td><td>0,0347</td><td>0,40 %</td></tr>
+<tr><td>Latencia p95 (ms)</td><td>14,7352</td><td>16,4087</td><td>1,6735</td><td>11,36 %</td></tr>
+<tr><td>Latencia p99 (ms)</td><td>21,6424</td><td>23,8405</td><td>2,1981</td><td>10,16 %</td></tr>
+<tr><td>Throughput (req/s)</td><td>44,2853</td><td>43,2927</td><td>−0,9926</td><td>−2,24 %</td></tr>
+<tr><td>Solicitudes</td><td>1331</td><td>1302</td><td>−29</td><td>−2,18 %</td></tr>
+<tr><td>Tasa de errores</td><td>0</td><td>0</td><td>0</td><td>no aplica</td></tr>
+</table>
+<table>
+<tr><th>Contenedor</th><th>CPU base</th><th>CPU OTel</th><th>CPU %</th><th>Mem base</th><th>Mem OTel</th><th>Mem %</th></tr>
+<tr><td>service-a</td><td>23,98 %</td><td>34,28 %</td><td>+42,97 %</td><td>293,04 MiB</td><td>403,50 MiB</td><td>+37,69 %</td></tr>
+<tr><td>service-b</td><td>18,53 %</td><td>33,49 %</td><td>+80,69 %</td><td>266,23 MiB</td><td>431,27 MiB</td><td>+61,99 %</td></tr>
+<tr><td>collector</td><td>1,58 %</td><td>0,91 %</td><td>−42,41 %</td><td>57,25 MiB</td><td>70,61 MiB</td><td>+23,33 %</td></tr>
+</table>
+<p>Checks de k6: 5320/5320 en baseline y 5204/5204 instrumentado. En el baseline el check de <code>traceId</code> no mira el cuerpo. En el instrumentado exige 32 hexadecimales distintos de cero, y pasó.</p>
+<h2>9. Lectura del overhead</h2>
+<p>El p50 sube 0,03 ms. En una sola pasada de 30 segundos eso es ruido. El p95 y el p99 suben 1,7 ms y 2,2 ms, cerca del 11 % y del 10 %. El caudal baja un 2 %. No hubo errores HTTP.</p>
+<p>La memoria de los JVM sube 110 MiB y 165 MiB. Ahí vive el agente, sus hilos y las colas de exportación. La CPU media de la ventana sube 10 y 15 puntos porcentuales. service-b crece más: atiende cada consulta de inventario y su JDBC. La ventana de <code>docker stats</code> dura 40 segundos e incluye el arranque del contenedor recién recreado, así que no es un perfil de estado estacionario de varios minutos.</p>
+<p>La CPU del Collector bajó en la pasada instrumentada. No se toma como un ahorro: el valor de partida es bajo y la muestra es corta. La memoria del Collector sí sube, de 57 MiB a 71 MiB, que es coherente con recibir lotes.</p>
+<p>Para bajar el costo sin apagar la visibilidad: intervalo de métricas por encima de 15 s, muestreo <code>parentbased_traceidratio</code> menor que 1 fuera del laboratorio, verbosidad <code>debug</code> del Collector en <code>basic</code>, y no abrir spans manuales alrededor del SQL. El batch del agente y el del Collector ya agrupan envíos.</p>
+<p>Esta corrida no se repitió. Los JSON de origen quedan en <code>load-tests/results/</code> para poder recalcular.</p>
+<h2>10. Limitaciones y trabajo pendiente</h2>
+<p>Hecho y comprobado en local: compilación y <code>mvn test</code>, compose, pedido real que llama a service-b y a MySQL, traza con los dos servicios, logs JSON con el mismo <code>trace_id</code>, series en Prometheus, dashboard con datos de la carga, y el benchmark de esta sección.</p>
+<p>Pendiente, y no simulado:</p>
+<ul>
+<li><code>terraform apply</code> en GCP y en AWS. No hay credenciales. En esta máquina tampoco estaba el CLI de Terraform, así que <code>terraform validate</code> no se ejecutó. Los Collector de GCP y AWS sí pasaron <code>otelcol validate</code>.</li>
+<li>El clic visual de un exemplar de Prometheus hacia Tempo.</li>
+<li>Repetir el benchmark con más usuarios y más de una pasada. Los porcentajes de arriba no deben citarse como capacidad de producción.</li>
+<li>El p99 del panel de Grafana no debe citarse como resultado de k6. El resultado de k6 es la tabla de la sección 8.</li>
+</ul>
+<h2>11. Referencias</h2>
+<ul>
+<li>OpenTelemetry, especificación de trazas, métricas y propagación W3C Trace Context.</li>
+<li>OpenTelemetry Java Agent 2.31.1 y API 1.65.0.</li>
+<li>OpenTelemetry Collector Contrib 0.162.0. Nombres vigentes <code>otlp_grpc</code> y <code>otlp_http</code>.</li>
+<li>Grafana, aprovisionamiento de datasources: <code>$$</code> conserva un <code>$</code> literal. Documentación de derived fields y <code>tracesToLogsV2</code>.</li>
+<li>Spring Boot 3.5.16, MySQL 8.4, Prometheus 3.4.1, Grafana 11.6.0, Tempo 2.8.1, Loki 3.4.2, k6 0.57.0.</li>
+<li>Documentos del propio proyecto: <code>docs/analisis-repositorio-docente.md</code>, <code>docs/arquitectura.md</code>, <code>docs/instrumentacion-opentelemetry.md</code>, <code>docs/collector.md</code>, <code>docs/correlacion-cross-signal.md</code>, <code>docs/benchmark-overhead.md</code>.</li>
+</ul></body></html>

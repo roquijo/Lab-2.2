@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lab22-env
+  namespace: lab22
+data:
+  GCP_PROJECT_ID: REEMPLAZAR_PROJECT_ID
+  CLOUD_REGION: us-central1
+  DEPLOYMENT_ENVIRONMENT: gcp
+  CLOUD_PROVIDER: gcp
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+  OTEL_METRIC_EXPORT_INTERVAL: "15000"
+  OTEL_PROPAGATORS: tracecontext,baggage
+  OTEL_JAVAAGENT_EXCLUDE_URLS: ".*/actuator/.*"
+  SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/lab22?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&serverTimezone=UTC
+  SPRING_DATASOURCE_USERNAME: lab
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-a
+  namespace: lab22
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service-a
+  template:
+    metadata:
+      labels:
+        app: service-a
+    spec:
+      containers:
+        - name: service-a
+          image: lab22/service-a:1.0.0
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: lab22-env
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: service-a
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.version=1.0.0,deployment.environment=gcp,service.namespace=lab22,cloud.provider=gcp
+            - name: SERVICE_B_URL
+              value: http://service-b:8081
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: SPRING_DATASOURCE_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-a
+  namespace: lab22
+spec:
+  type: LoadBalancer
+  selector:
+    app: service-a
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-b
+  namespace: lab22
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service-b
+  template:
+    metadata:
+      labels:
+        app: service-b
+    spec:
+      containers:
+        - name: service-b
+          image: lab22/service-b:1.0.0
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: lab22-env
+          env:
+            - name: SERVER_PORT
+              value: "8081"
+            - name: OTEL_SERVICE_NAME
+              value: service-b
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.version=1.0.0,deployment.environment=gcp,service.namespace=lab22,cloud.provider=gcp
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: SPRING_DATASOURCE_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-b
+  namespace: lab22
+spec:
+  type: ClusterIP
+  selector:
+    app: service-b
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
